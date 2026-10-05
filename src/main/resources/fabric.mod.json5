@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "eppopkaaddons",
+  "version": "${version}",
+  "name": "eppopkaaddons",
+  //#if CHEAT
+  "description": "Independent 26.1.2 SkyBlock addon with Eppopka visual, HUD, dungeon and hunting utilities.",
+  //#else
+  //$"description": "Independent 26.1.2 SkyBlock addon with Eppopka visual, HUD, dungeon and hunting utilities.",
+  //#endif
+  "authors": ["eppopka"],
+  "license": "CC0-1.0",
+  "icon": "assets/eppopkaaddons/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "modmenu": [
+      "dev.eppopkaaddons.ui.clickgui.ModMenuIntegration"
+    ],
+    "client": [
+      {
+        "value": "dev.eppopkaaddons.EppopkaAddons",
+        "adapter": "kotlin"
+      }
+    ]
+  },
+  "mixins": [
+    "eppopkaaddons.mixins.json"
+  ],
+  "accessWidener": "eppopkaaddons.accesswidener",
+  "depends": {
+    "fabricloader": ">=0.17.3",
+    "minecraft": "26.1.2",
+    "java": ">=25",
+    "fabric-api": "*",
+    "fabric-language-kotlin": "*"
+  },
+  "custom": {}
+}

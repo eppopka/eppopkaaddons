@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "dev.eppopkaaddons.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "plugin": "dev.eppopkaaddons.init.AutoMixinDiscovery",
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "overwrites": {
+    "requireAnnotations": true
+  }
+}
