@@ -7,6 +7,7 @@ import dev.eppopkaaddons.event.impl.ContainerFullyOpenedEvent
 import dev.eppopkaaddons.event.impl.MainThreadPacketReceivedEvent
 import dev.eppopkaaddons.features.Feature
 import dev.eppopkaaddons.config.types.ButtonSetting
+import dev.eppopkaaddons.config.types.RangeSliderSetting
 import dev.eppopkaaddons.config.types.SliderSetting
 import dev.eppopkaaddons.config.types.ToggleSetting
 import dev.eppopkaaddons.utils.ChatUtils
@@ -52,14 +53,10 @@ object AutoRag: Feature(
         .withDescription("After the proc, swap to Sword of Bad Health, or to Terminator if the sword is missing.")
     private val petSwap by ToggleSetting("Summon Ender Dragon")
         .withDescription("After the proc, run /pet and click the Ender Dragon pet in the menu.")
-    private val castDelayMin by SliderSetting("Cast Delay Min", 2, 1, 20, 1)
-        .withDescription("Lowest amount of ticks between swapping to the axe and right clicking it.")
-    private val castDelayMax by SliderSetting("Cast Delay Max", 6, 1, 20, 1)
-        .withDescription("Highest amount of ticks between swapping to the axe and right clicking it.")
-    private val clickDelayMin by SliderSetting("Menu Delay Min", 4, 1, 20, 1)
-        .withDescription("Lowest amount of ticks before clicking the pet once the menu opens.")
-    private val clickDelayMax by SliderSetting("Menu Delay Max", 10, 1, 20, 1)
-        .withDescription("Highest amount of ticks before clicking the pet once the menu opens.")
+    private val castDelay by RangeSliderSetting("Cast Delay", 2, 6, 1, 20, 1, " ticks")
+        .withDescription("Randomized delay between swapping to the axe and right clicking it.")
+    private val menuDelay by RangeSliderSetting("Menu Delay", 4, 10, 1, 20, 1, " ticks")
+        .withDescription("Randomized delay before clicking the pet once the menu opens.")
     private val timeout by SliderSetting("Timeout", 5, 2, 15, 1)
         .withDescription("Seconds to wait for the proc before giving up.")
 
@@ -117,7 +114,7 @@ object AutoRag: Feature(
         PlayerUtils.swapToSlot(ragSlot)
 
         // Randomized swap -> right click gap, plus a sub tick millisecond offset.
-        ThreadUtils.scheduledTask(randomTicks(castDelayMin.value, castDelayMax.value)) {
+        ThreadUtils.scheduledTask(randomTicks(castDelay.value.lower, castDelay.value.upper)) {
             if (! casting) return@scheduledTask
             ThreadUtils.setTimeout(Random.nextLong(0L, 45L)) {
                 if (! casting) return@setTimeout
@@ -201,7 +198,7 @@ object AutoRag: Feature(
                 return@register
             }
 
-            ThreadUtils.scheduledTask(randomTicks(clickDelayMin.value, clickDelayMax.value)) {
+            ThreadUtils.scheduledTask(randomTicks(menuDelay.value.lower, menuDelay.value.upper)) {
                 GuiUtils.clickSlot(slot, GuiUtils.ButtonType.LEFT)
                 ThreadUtils.scheduledTask(randomTicks(2, 5)) { mc.player?.closeContainer() }
             }

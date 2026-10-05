@@ -5,6 +5,7 @@ package dev.eppopkaaddons.features.impl.qol
 import dev.eppopkaaddons.event.impl.TickEvent
 import dev.eppopkaaddons.features.Feature
 import dev.eppopkaaddons.mixin.IKeyMapping
+import dev.eppopkaaddons.config.types.RangeSliderSetting
 import dev.eppopkaaddons.config.types.SliderSetting
 import dev.eppopkaaddons.config.types.ToggleSetting
 import net.minecraft.client.KeyMapping
@@ -32,10 +33,8 @@ object AutoReel: Feature(name = "Auto Reel") {
         .withDescription("How far away a REEL label may be for it to count.")
     private val requireLasso by ToggleSetting("Require Lasso In Hand")
         .withDescription("Only reel while you are actually holding a Lasso. Turn this off if detection of your lasso item fails.")
-    private val minReaction by SliderSetting("Min Reaction (ms)", 160, 0, 1000, 10)
-        .withDescription("Lower bound of the randomized human reaction delay.")
-    private val maxReaction by SliderSetting("Max Reaction (ms)", 420, 0, 1500, 10)
-        .withDescription("Upper bound of the randomized human reaction delay.")
+    private val reactionDelay by RangeSliderSetting("Reaction Delay", 160, 420, 0, 1500, 10, " ms")
+        .withDescription("Randomized human reaction delay.")
     private val cooldown by SliderSetting("Cooldown (Ticks)", 10, 1, 40, 1)
         .withDescription("Minimum ticks between two automatic clicks.")
 
@@ -59,8 +58,8 @@ object AutoReel: Feature(name = "Auto Reel") {
     }
 
     private fun randomDelayTicks(): Int {
-        val min = minReaction.value
-        val max = maxReaction.value.coerceAtLeast(min)
+        val min = reactionDelay.value.lower
+        val max = reactionDelay.value.upper
         val ms = if (max <= min) min else Random.nextInt(min, max + 1)
         return (ms / 50).coerceAtLeast(0)
     }

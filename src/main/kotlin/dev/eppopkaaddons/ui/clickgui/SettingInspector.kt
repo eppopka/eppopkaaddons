@@ -25,10 +25,17 @@ class SettingInspector {
     private var textInput: TextInputSetting? = null
     private var keyInput: KeybindSetting? = null
     private var draggingSlider: Pair<SliderSetting<*>, Rect>? = null
+    private var draggingRangeSlider: Triple<RangeSliderSetting<*>, Rect, Boolean>? = null
     private val colorPicker = ColorPickerOverlay()
 
     fun bind(next: Feature?) {
-        feature = next; scroll = 0f; textInput = null; keyInput = null; draggingSlider = null; colorPicker.reset()
+        feature = next
+        scroll = 0f
+        textInput = null
+        keyInput = null
+        draggingSlider = null
+        draggingRangeSlider = null
+        colorPicker.reset()
     }
 
     fun selected() = feature
@@ -95,6 +102,7 @@ class SettingInspector {
             is ToggleSetting -> drawToggle(ctx, row, setting.value, accent)
             is DropdownSetting -> drawValue(ctx, row, setting.options.getOrNull(setting.value) ?: "—", accent)
             is SliderSetting<*> -> drawSlider(ctx, row, setting, accent)
+            is RangeSliderSetting<*> -> drawRangeSlider(ctx, row, setting, accent)
             is ButtonSetting -> drawValue(ctx, row, "RUN", accent)
             is KeybindSetting -> drawValue(ctx, row, if (keyInput === setting) "PRESS KEY" else setting.displayName(), accent)
             is TextInputSetting -> drawValue(ctx, row, if (textInput === setting) "${setting.value}_" else setting.value.ifBlank { "EMPTY" }, accent)
@@ -138,6 +146,21 @@ class SettingInspector {
         FontSystem.draw(ctx, "${setting.stringfy(setting.value)}${setting.suffix}", track.x, row.y + 9f, Color(196, 200, 211), .58f, true)
     }
 
+    private fun drawRangeSlider(ctx: GuiGraphicsExtractor, row: Rect, setting: RangeSliderSetting<*>, accent: Color) {
+        val lower = setting.progress(setting.value.lower)
+        val upper = setting.progress(setting.value.upper)
+        val track = Rect(row.right - 137f, row.centerY + 7f, 123f, 4f)
+        ctx.pill(track, Color(255, 255, 255, 20))
+        ctx.pill(
+            Rect(track.x + track.width * lower, track.y, track.width * (upper - lower), track.height),
+            accent.alpha(220),
+        )
+        ctx.pill(Rect(track.x + track.width * lower - 5f, track.y - 4f, 11f, 11f), Color(248, 249, 252))
+        ctx.pill(Rect(track.x + track.width * upper - 5f, track.y - 4f, 11f, 11f), Color(248, 249, 252))
+        val label = "${setting.stringify(setting.value.lower)}–${setting.stringify(setting.value.upper)}${setting.suffix}"
+        FontSystem.draw(ctx, label, track.x, row.y + 9f, Color(196, 200, 211), .58f, true)
+    }
+
     fun click(x: Int, y: Int, button: Int): Boolean {
         val current = feature ?: return false
         if (colorPicker.isActive()) return colorPicker.click(x, y, button)
@@ -152,6 +175,15 @@ class SettingInspector {
             is SliderSetting<*> -> if (button == 0) {
                 draggingSlider = setting to hit.rect
                 setSlider(setting, hit.rect, x)
+            }
+            is RangeSliderSetting<*> -> if (button == 0) {
+                val trackStart = hit.rect.right - 137f
+                val percent = ((x - trackStart) / 123f).coerceIn(0f, 1f)
+                val lowerDistance = kotlin.math.abs(percent - setting.progress(setting.value.lower))
+                val upperDistance = kotlin.math.abs(percent - setting.progress(setting.value.upper))
+                val lowerHandle = lowerDistance <= upperDistance
+                draggingRangeSlider = Triple(setting, hit.rect, lowerHandle)
+                setRangeSlider(setting, hit.rect, x, lowerHandle)
             }
             is ButtonSetting -> setting()
             is KeybindSetting -> keyInput = setting
@@ -172,6 +204,10 @@ class SettingInspector {
     fun drag(x: Int, y: Int, button: Int): Boolean {
         if (colorPicker.drag(x, y, button)) return true
         if (button != 0) return false
+        draggingRangeSlider?.let { (setting, row, lowerHandle) ->
+            setRangeSlider(setting, row, x, lowerHandle)
+            return true
+        }
         val (setting, row) = draggingSlider ?: return false
         setSlider(setting, row, x)
         return true
@@ -179,7 +215,10 @@ class SettingInspector {
 
     fun release(button: Int) {
         colorPicker.release(button)
-        if (button == 0) draggingSlider = null
+        if (button == 0) {
+            draggingSlider = null
+            draggingRangeSlider = null
+        }
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -188,6 +227,15 @@ class SettingInspector {
         val start = row.right - 137f
         val percent = ((x - start) / 123f).coerceIn(0f, 1f)
         setting.value = setting.snapToStep(setting.min.toDouble() + (setting.max.toDouble() - setting.min.toDouble()) * percent)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun setRangeSlider(raw: RangeSliderSetting<*>, row: Rect, x: Int, lowerHandle: Boolean) {
+        val setting = raw as RangeSliderSetting<Number>
+        val start = row.right - 137f
+        val percent = ((x - start) / 123f).coerceIn(0f, 1f)
+        val rawValue = setting.min.toDouble() + (setting.max.toDouble() - setting.min.toDouble()) * percent
+        if (lowerHandle) setting.setLower(rawValue) else setting.setUpper(rawValue)
     }
 
     fun scroll(delta: Double): Boolean {

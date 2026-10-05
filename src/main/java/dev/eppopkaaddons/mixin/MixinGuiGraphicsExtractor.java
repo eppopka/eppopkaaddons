@@ -1,6 +1,5 @@
 package dev.eppopkaaddons.mixin;
 
-import dev.eppopkaaddons.features.impl.visual.Cosmetics;
 import dev.eppopkaaddons.features.impl.visual.cosmetics.text.TextReplacer;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
@@ -17,7 +16,7 @@ import java.util.List;
 public abstract class MixinGuiGraphicsExtractor {
     @WrapMethod(method = "tooltip")
     private void onRenderTooltipPre(Font font, List<ClientTooltipComponent> lines, int xo, int yo, ClientTooltipPositioner positioner, @org.jspecify.annotations.Nullable Identifier style, Operation<Void> original) {
-        if (Cosmetics.INSTANCE.enabled && Cosmetics.getCustomNames().getValue() && ! Cosmetics.getLoreNames().getValue()) TextReplacer.drawingTooltip = true;
+        TextReplacer.drawingTooltip = true;
         try {
             original.call(font, lines, xo, yo, positioner, style);
         } finally {

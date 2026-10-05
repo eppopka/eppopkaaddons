@@ -22,7 +22,6 @@ import net.minecraft.client.renderer.entity.state.AvatarRenderState
 import net.minecraft.world.entity.Avatar
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.abs
 
 object Cosmetics : Feature(
     description = "Owner-maintained custom player names and cosmetics.",
@@ -31,11 +30,6 @@ object Cosmetics : Feature(
 ) {
     @JvmStatic val customNames by ToggleSetting("Show Custom Names", true)
     @JvmStatic val showBadges by ToggleSetting("Show Custom Badges", true)
-    @JvmStatic val loreNames by ToggleSetting("Show Names in Tooltips", false).showIf { customNames.value }
-
-    val customSizes by ToggleSetting("Show Custom Sizes", false)
-    val showHalo by ToggleSetting("Show Halos", false)
-    val showDragonWings by ToggleSetting("Show Dragon Wings", false)
     val reload by ButtonSetting("Reload Custom Names") {
         if (System.currentTimeMillis() - lastReload >= 15_000) init()
         else NotificationManager.push("Custom Names", "Please wait ${NumbersUtils.formatTime(15_000 - (System.currentTimeMillis() - lastReload))} before reloading.")
@@ -82,19 +76,8 @@ object Cosmetics : Feature(
 
     @JvmStatic
     fun scaleHook(state: AvatarRenderState, poseStack: PoseStack) {
-        val gameProfile = state.getData(GAME_PROFILE_KEY) ?: return
-        val data = cosmeticDataFor(gameProfile.id) ?: return
-        if (customSizes.value && data.hasCustomSize) {
-            if (data.sizeY < 0) poseStack.translate(0f, data.sizeY * 2f, 0f)
-            poseStack.scale(data.sizeX, data.sizeY, data.sizeZ)
-        }
-        state.nameTagAttachment?.let { pos ->
-            var scaleY = 1f
-            var offset = 0f
-            if (customSizes.value && data.hasCustomSize) scaleY = abs(data.sizeY)
-            if (showHalo.value && data.hasHalo) offset += .15f
-            state.nameTagAttachment = vec(pos.x, (pos.y + .15) * scaleY + offset, pos.z)
-        }
+        // Custom size, halo and wings controls were removed. Keep this hook as
+        // a no-op so existing mixins remain binary-compatible.
     }
 
     fun cosmeticDataFor(uuid: UUID) = cosmeticPeople[uuid]

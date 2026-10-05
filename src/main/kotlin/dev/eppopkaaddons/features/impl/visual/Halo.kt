@@ -5,7 +5,6 @@ import dev.eppopkaaddons.config.types.SliderSetting
 import dev.eppopkaaddons.config.types.ToggleSetting
 import dev.eppopkaaddons.event.impl.RenderWorldEvent
 import dev.eppopkaaddons.features.Feature
-import dev.eppopkaaddons.utils.SmoothHeight
 import dev.eppopkaaddons.utils.render.world.RenderBatcher
 import dev.eppopkaaddons.utils.render.world.RenderContext
 import net.minecraft.world.phys.Vec3
@@ -30,10 +29,6 @@ object Halo: Feature("Renders a customizable halo above your head.", name = "Hal
         .withDescription("Height above your head in centimeters.")
     private val bob by ToggleSetting("Bob", true)
         .withDescription("Gently floats up and down.")
-    private val smoothing by SliderSetting("Smoothing", 9, 0, 30, 1)
-        .withDescription("How softly the halo follows your hitbox when you sneak, unsneak, swim or crawl. Lower = slower, softer glide. 0 = instant, like vanilla.")
-    private val phase by ToggleSetting("Phase", false)
-        .withDescription("Visible through walls.")
     private val fill by ToggleSetting("Fill", false)
         .withDescription("Fills the halo with translucent polygons.")
     private val fillOpacity by SliderSetting("Fill Opacity", 30, 5, 100, 5)
@@ -50,9 +45,7 @@ object Halo: Feature("Renders a customizable halo above your head.", name = "Hal
             val pos = p.getPosition(pt)
 
             val bobOffset = if (bob.value) sin(System.currentTimeMillis() / 600.0) * 0.06 else 0.0
-            // Vanilla snaps bbHeight the instant you sneak, which makes the halo jump.
-            // Ease it instead so it glides up and down.
-            val hitbox = SmoothHeight.smooth("halo", p.bbHeight.toDouble(), smoothing.value.toDouble())
+            val hitbox = p.bbHeight.toDouble()
             val center = Vec3(pos.x, pos.y + hitbox + height.value.toDouble() / 100.0 + bobOffset, pos.z)
 
             val base = color.value
@@ -66,9 +59,9 @@ object Halo: Feature("Renders a customizable halo above your head.", name = "Hal
 
             if (fill.value) {
                 val fillCol = Color(col.red, col.green, col.blue, (255 * fillOpacity.value / 100f * opacity.value / 100f).toInt().coerceIn(0, 255))
-                renderDisc(event.ctx, center, radius.value.toDouble() / 100.0, fillCol, phase.value)
+                renderDisc(event.ctx, center, radius.value.toDouble() / 100.0, fillCol, false)
             }
-            renderRing(event.ctx, center, radius.value.toDouble() / 100.0, col, thickness.value.toDouble(), phase.value)
+            renderRing(event.ctx, center, radius.value.toDouble() / 100.0, col, thickness.value.toDouble(), false)
         }
     }
 

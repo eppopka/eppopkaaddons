@@ -12,11 +12,14 @@ import net.minecraft.client.renderer.texture.OverlayTexture
 import net.minecraft.resources.Identifier
 
 class DragonWingsLayer(parent: RenderLayerParent<AvatarRenderState, PlayerModel>): RenderLayer<AvatarRenderState, PlayerModel>(parent) {
+    private companion object {
+        const val ENABLED = false
+    }
     private val wingsModel = DragonWingsModel.create()
     private val renderType = RenderTypes.entityCutout(Identifier.withDefaultNamespace("textures/entity/enderdragon/dragon.png"))
 
     override fun submit(poseStack: PoseStack, collector: SubmitNodeCollector, light: Int, state: AvatarRenderState, yRot: Float, xRot: Float) {
-        if (! Cosmetics.enabled || ! Cosmetics.showDragonWings.value) return
+        if (!ENABLED || !Cosmetics.enabled) return
         if (state.isInvisible || state.isSpectator) return
         val profile = state.getData(Cosmetics.GAME_PROFILE_KEY) ?: return
         val data = Cosmetics.cosmeticDataFor(profile.id)?.takeIf { it.hasDragonWings } ?: return

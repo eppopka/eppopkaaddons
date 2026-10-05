@@ -5,7 +5,6 @@ import dev.eppopkaaddons.EppopkaAddons.mc
 import dev.eppopkaaddons.features.impl.visual.Cosmetics
 import dev.eppopkaaddons.features.impl.visual.Cosmetics.GAME_PROFILE_KEY
 import dev.eppopkaaddons.features.impl.visual.Cosmetics.SNEAKING_KEY
-import dev.eppopkaaddons.features.impl.visual.Cosmetics.showHalo
 import com.mojang.blaze3d.vertex.PoseStack
 import net.minecraft.client.model.player.PlayerModel
 import net.minecraft.client.renderer.SubmitNodeCollector
@@ -21,6 +20,9 @@ import java.awt.Color
 import kotlin.math.sin
 
 class HaloLayer(parent: RenderLayerParent<AvatarRenderState, PlayerModel>): RenderLayer<AvatarRenderState, PlayerModel>(parent) {
+    private companion object {
+        const val ENABLED = false
+    }
     private val haloModel = HaloModel.create()
     private val whiteTexture = Identifier.fromNamespaceAndPath(EppopkaAddons.MOD_ID, "halo").also {
         val texture = DynamicTexture("noamm_halo", 1, 1, false)
@@ -30,7 +32,7 @@ class HaloLayer(parent: RenderLayerParent<AvatarRenderState, PlayerModel>): Rend
     }
 
     override fun submit(poseStack: PoseStack, collector: SubmitNodeCollector, light: Int, state: AvatarRenderState, yRot: Float, xRot: Float) {
-        if (! showHalo.value) return
+        if (!ENABLED) return
         if (state.isInvisibleToPlayer) return
         val profile = state.getData(GAME_PROFILE_KEY) ?: return
         val data = Cosmetics.cosmeticDataFor(profile.id) ?: return

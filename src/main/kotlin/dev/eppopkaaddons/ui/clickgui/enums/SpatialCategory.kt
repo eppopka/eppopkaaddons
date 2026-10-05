@@ -14,11 +14,11 @@ enum class SpatialCategory(
     val accent: Int,
     private val assignments: Set<String>,
 ) {
-    VISUAL("Visual", "COSMETICS / PRESENCE", "V", 0xFF9B8CFF.toInt(), keys("AlwaysWater", "AmbientParticles", "ChinaHat", "Cosmetics", "DvdBounce", "Halo", "ItemAura", "MoveHearts", "MoveHotbar", "PetDisplay", "RotatingItem")),
-    QOL("QoL", "QUIET AUTOMATION", "Q", 0xFF65D7C0.toInt(), keys("AutoRag", "AutoReel", "ShitterList")),
-    DUNGEON("Dungeon", "ROUTES / ENCOUNTERS", "D", 0xFFFFB86B.toInt(), keys("LbTimer", "OdinDungeonWaypoints")),
+    VISUAL("Visual", "COSMETICS / PRESENCE", "V", 0xFF9B8CFF.toInt(), keys("AlwaysWater", "AmbientParticles", "ChinaHat", "Cosmetics", "DvdBounce", "Halo", "ItemAura", "MoveHearts", "MoveHotbar", "RotatingItem")),
+    QOL("QoL", "QUIET AUTOMATION", "Q", 0xFF65D7C0.toInt(), keys("AutoRag", "AutoReel")),
+    DUNGEON("Dungeon", "ROUTES / ENCOUNTERS", "D", 0xFFFFB86B.toInt(), keys("OdinDungeonWaypoints", "ShitterList")),
     HUNTING("Hunting", "TARGETS / TRACKING", "H", 0xFFFF7290.toInt(), keys("BestiaryESP", "InvisibugESP")),
-    GENERAL("General", "CORE UTILITIES", "G", 0xFF7DB7FF.toInt(), emptySet());
+    GENERAL("Global", "CORE UTILITIES", "G", 0xFF7DB7FF.toInt(), keys("PetDisplay"));
 
     fun modules(): List<Feature> {
         val all = FeatureManager.features.asSequence()
