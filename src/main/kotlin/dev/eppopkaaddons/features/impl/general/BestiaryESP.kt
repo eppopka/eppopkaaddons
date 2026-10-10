@@ -1,4 +1,4 @@
-package dev.eppopkaaddons.features.impl.hunting
+package dev.eppopkaaddons.features.impl.general
 
 //#if CHEAT
 

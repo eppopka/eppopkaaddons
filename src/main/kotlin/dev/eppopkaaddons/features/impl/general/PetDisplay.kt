@@ -1,375 +1,248 @@
 package dev.eppopkaaddons.features.impl.general
 
+import dev.eppopkaaddons.config.types.ButtonSetting
 import dev.eppopkaaddons.config.types.ColorSetting
+import dev.eppopkaaddons.config.types.DropdownSetting
 import dev.eppopkaaddons.config.types.SliderSetting
 import dev.eppopkaaddons.config.types.ToggleSetting
 import dev.eppopkaaddons.event.EventBus
 import dev.eppopkaaddons.event.impl.*
 import dev.eppopkaaddons.features.Feature
 import dev.eppopkaaddons.features.annotations.AlwaysActive
-import dev.eppopkaaddons.ui.clickgui.enums.CategoryType
-import dev.eppopkaaddons.ui.clickgui.foundation.FontSystem
-import dev.eppopkaaddons.ui.clickgui.foundation.GlassRenderer.pill
-import dev.eppopkaaddons.ui.clickgui.foundation.GlassRenderer.rounded
-import dev.eppopkaaddons.ui.clickgui.foundation.Rect
-import dev.eppopkaaddons.utils.ChatUtils.formattedText
-import dev.eppopkaaddons.utils.ChatUtils.removeFormatting
+import dev.eppopkaaddons.ui.hud.hotbar.HotbarPainter
+import dev.eppopkaaddons.ui.hud.pet.PetOverlayView
 import dev.eppopkaaddons.utils.ChatUtils.unformattedText
+import dev.eppopkaaddons.utils.items.ItemUtils.customData
 import dev.eppopkaaddons.utils.items.ItemUtils.lore
 import dev.eppopkaaddons.utils.location.LocationUtils
-import dev.eppopkaaddons.utils.remove
-import dev.eppopkaaddons.utils.render.ItemRenderer
+import dev.eppopkaaddons.utils.pets.PetXpHistory
+import dev.eppopkaaddons.utils.pets.PetXpModel
 import dev.eppopkaaddons.utils.render.Render2D.highlight
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen
 import net.minecraft.network.protocol.game.ClientboundContainerClosePacket
+import net.minecraft.network.protocol.game.ClientboundContainerSetContentPacket
+import net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket
 import net.minecraft.network.protocol.game.ServerboundContainerClosePacket
 import net.minecraft.world.inventory.ContainerInput
 import net.minecraft.world.item.ItemStack
 import java.awt.Color
-import java.util.ArrayDeque
-import kotlin.math.roundToLong
+import kotlin.jvm.optionals.getOrNull
+import kotlin.math.exp
 
-/** Active-pet HUD with a rolling, session-local XP rate and ETA estimates. */
+/** Server-snapshot XP card. Never adds generic skill gains to pet experience. */
 @AlwaysActive
 object PetDisplay : Feature(
-    description = "Active pet, XP/hour and time-to-level estimates.",
+    description = "A styled active-pet card with verified server XP, sync age and sampled estimates.",
     name = "Pet Overlay",
 ) {
-    override val category = CategoryType.VISUAL
-
+    private val style by DropdownSetting("Style", 1, listOf("Minimal", "Glass", "Neon")).section("Appearance")
     private val compactMode by ToggleSetting("Compact Mode", false)
-        .withDescription("Shows a single-line pet card with only the next-level ETA.")
-        .section("Overlay")
-    private val accentColor by ColorSetting("Accent", Color(124, 113, 255), false)
-    private val backgroundOpacity by SliderSetting("Background Opacity", .88f, .25f, 1f, .01f)
-    private val sampleMinutes by SliderSetting("XP Sample Window", 5, 1, 30, 1, " min")
-        .withDescription("Controls how much recent XP is used for the XP/hour estimate.")
-
+    private val accent by ColorSetting("Accent Color", Color(94, 159, 232), false).jsonName("Accent")
+    private val background by ColorSetting("Background Color", Color(12, 17, 25), false)
+    private val backgroundOpacity by SliderSetting("Background Opacity", .75f, 0f, 1f, .01f)
+    private val cornerRadius by SliderSetting("Corner Radius", 9f, 0f, 18f, .5f)
+    private val gradient by ToggleSetting("Gradient", true)
+    private val gradientColor by ColorSetting("Gradient Color", Color(26, 34, 48), false).showIf { gradient.value }
+    private val glow by ToggleSetting("Glow", true).section("Effects")
+    private val shadow by ToggleSetting("Shadow", true)
+    private val shimmer by ToggleSetting("Animated Shimmer", false)
+    private val smoothProgress by ToggleSetting("Smooth Progress", true)
+    private val sampleMinutes by SliderSetting("XP Sample Window", 5, 1, 30, 1, " min").section("Data")
+        .withDescription("XP/hour is sampled from actual pet-data updates, not the skill action bar.")
+    private val refresh by ButtonSetting("Sync Pet Data (/pets)") {
+        if (LocationUtils.inSkyblock) mc.player?.connection?.sendCommand("pets")
+    }.withDescription("Opens the Pets menu to obtain the server's current pet XP and texture.")
     private val autoPetTitles by ToggleSetting("Auto Pet Title", false).section("Notifications")
-    private val autoPetTitlesDungeonOnly by ToggleSetting("Dungeons Only", false)
-        .showIf { autoPetTitles.value }
-
+    private val autoPetTitlesDungeonOnly by ToggleSetting("Dungeons Only", false).showIf { autoPetTitles.value }
     private val activePetHighlight by ToggleSetting("Highlight Active Pet", true).section("Pets Menu")
-    private val petHighlightColor by ColorSetting("Highlight Color", Color.CYAN)
-        .showIf { activePetHighlight.value }
+    private val petHighlightColor by ColorSetting("Highlight Color", Color.CYAN).showIf { activePetHighlight.value }
 
-    private val chatPetRuleRegex = Regex("§cAutopet §eequipped your §7\\[Lvl .*] (?<pet>.*)§e! §a§lVIEW RULE")
-    private val chatSpawnRegex = Regex("§aYou summoned your (?<pet>.*)§a!")
-    private val chatDespawnRegex = Regex("§aYou despawned your .*§a!")
-    private val levelRegex = Regex("\\[Lvl (\\d+)]\\s*(.+)$")
-    private val xpLineRegex = Regex("([\\d,.]+)\\s*/\\s*([\\d,.]+)")
-    private val skillGainRegex = Regex("\\+([\\d,.]+)\\s+(?:Combat|Mining|Farming|Foraging|Fishing|Enchanting|Alchemy|Taming|Carpentry|Runecrafting|Social)(?:\\s|\\()", RegexOption.IGNORE_CASE)
-    private val loadoutSlots = setOf(14, 15, 16, 23, 24, 25, 32, 33, 34, 41, 42, 43)
-    private val petMenuRegex = Regex("^(\\(\\d/\\d\\) )?Pets$")
-
-    private data class XpSample(val at: Long, val total: Double)
-    private data class PetState(
-        val stack: ItemStack,
-        val level: Int,
-        val maxLevel: Int,
-        val rarityOffset: Int,
-        val xpIntoLevel: Double,
-        val xpForLevel: Double,
-        val totalXp: Double,
-        val maxTotalXp: Double,
-    )
-
-    private val samples = ArrayDeque<XpSample>()
-    private val petCache = mutableMapOf<String, PetState>()
-    private var activePetStack = ItemStack.EMPTY
-    private var petName = ""
-    private var petLevel = 0
-    private var petMaxLevel = 100
-    private var rarityOffset = 20
-    private var xpIntoLevel = 0.0
-    private var xpForLevel = 0.0
-    private var totalXp = 0.0
-    private var maxTotalXp = 0.0
+    private data class State(val key: String, val reading: PetXpModel.Reading, val stack: ItemStack,
+                             val at: Long, val stableIdentity: Boolean)
+    private val cache = linkedMapOf<String, State>()
+    private var active: State? = null
+    private var pendingName = ""
+    private var cached = false
+    private val history = PetXpHistory()
     private var selectedPetSlot = -1
-    private var autoPetTitle = ""
-    private var autoPetTitleTicks = 0
+    private var menuId = -1
+    private var autoTitle = ""
+    private var titleTicks = 0
+    private var paintedKey = ""
+    private var paintedProgress = 0f
+    private var lastDraw = 0L
+    private val effectEpoch = System.nanoTime()
+    private val petMenu = Regex("^(?:\\(\\d+/\\d+\\)\\s*)?Pets$", RegexOption.IGNORE_CASE)
+    private val summon = Regex("^You summoned your (.+?)!$", RegexOption.IGNORE_CASE)
+    private val autopet = Regex("^Autopet equipped your (.+?)!", RegexOption.IGNORE_CASE)
+    private val despawn = Regex("^You despawned your .+!$", RegexOption.IGNORE_CASE)
 
     override fun init() {
-        hudElement(
-            "Pet Overlay",
-            shouldDraw = { LocationUtils.inSkyblock && petName.isNotBlank() },
-        ) { ctx, example ->
-            val model = if (example) Preview else snapshot()
-            val width = if (compactMode.value) 166f else 196f
-            val height = if (compactMode.value) 44f else 82f
-            val bgAlpha = (backgroundOpacity.value * 245).toInt().coerceIn(0, 245)
-            ctx.rounded(Rect(0f, 0f, width, height), 10f, Color(6, 9, 15, bgAlpha))
-            ctx.rounded(Rect(0f, 0f, 3f, height), 1.5f, accentColor.value)
-            ctx.rounded(Rect(1f, 1f, width - 2f, 1f), .5f, Color(255, 255, 255, 22))
+        hudElement("Pet Overlay", shouldDraw = { LocationUtils.inSkyblock }) { ctx, example ->
+            val state = active
+            val reading = if (example && state == null) preview() else state?.reading
+            val now = System.currentTimeMillis()
+            val drawTime = System.nanoTime()
+            val elapsed = if (lastDraw == 0L) 0f else ((drawTime - lastDraw) / 1e9).toFloat().coerceIn(0f, .1f)
+            lastDraw = drawTime
+            val key = "${state?.key}:${reading?.level}:$example"
+            val target = reading?.progress?.toFloat()
+            if (target == null || key != paintedKey || !smoothProgress.value || !motion()) {
+                paintedProgress = target ?: 0f
+                paintedKey = key
+            } else paintedProgress += (target - paintedProgress) * (1.0 - exp(-14.0 * elapsed)).toFloat()
+            val look = HotbarPainter.Appearance(
+                HotbarPainter.Style.entries[style.value.coerceIn(0, 2) + 1],
+                background.value, gradientColor.value, accent.value, backgroundOpacity.value,
+                cornerRadius.value, 1f, gradient.value, false,
+                shadow.value, .65f, glow.value, .5f, 6f,
+                shimmer.value && motion(), .12f, .2f, 4f,
+            )
+            PetOverlayView.draw(ctx, reading, pendingName, state?.stack ?: ItemStack.EMPTY,
+                if (target != null) paintedProgress else null,
+                if (example && state == null) 1_240_000.0 else history.perHour(now, sampleMinutes.value),
+                state?.at ?: 0L, now, cached, example, compactMode.value, look,
+                ((drawTime - effectEpoch) / 1e9).toFloat())
+        } defaults { x = 18f; y = 82f; scale = 1f }
 
-            if (!activePetStack.isEmpty) {
-                // ItemRenderer is centered around the supplied point. Keeping the
-                // point inside the card fixes the pet portrait sitting above it.
-                ItemRenderer.drawBatchedItemStack(ctx, activePetStack, 14, 14, 1.55f)
-                ItemRenderer.endItemRendererBatch(ctx)
-            }
-            FontSystem.draw(ctx, FontSystem.ellipsize(model.name, width - 68f, .67f), 51f, 9f, Color(244, 246, 251), .67f, true)
-            FontSystem.draw(ctx, "LVL ${model.level}", 51f, 21f, accentColor.value, .54f, true)
-            val progress = model.progress.coerceIn(0f, 1f)
-            val bar = Rect(11f, 36f, width - 22f, 4f)
-            ctx.pill(bar, Color(255, 255, 255, 22))
-            ctx.pill(bar.copy(width = bar.width * progress), accentColor.value)
-
-            if (!compactMode.value) {
-                FontSystem.draw(ctx, "XP/H", 11f, 49f, Color(139, 148, 166), .46f, true)
-                FontSystem.draw(ctx, formatXp(model.xpPerHour), 48f, 49f, Color(226, 231, 240), .5f, true)
-                FontSystem.draw(ctx, "NEXT", 11f, 65f, Color(139, 148, 166), .46f, true)
-                FontSystem.draw(ctx, formatDuration(model.nextSeconds), 48f, 65f, Color(226, 231, 240), .5f, true)
-                FontSystem.draw(ctx, "MAX", 111f, 65f, Color(139, 148, 166), .46f, true)
-                FontSystem.draw(ctx, formatDuration(model.maxSeconds), 139f, 65f, Color(226, 231, 240), .5f, true)
-            }
-            width to height
-        } defaults {
-            x = 18f
-            y = 82f
-            scale = 1f
-        }
-
-        hudElement(
-            "Auto Pet Title",
-            enabled = { autoPetTitles.value },
-            shouldDraw = { ticker.isActive },
-            centered = true,
-        ) { context, example ->
-            val text = if (example) "&6Golden Dragon" else autoPetTitle
-            dev.eppopkaaddons.utils.render.Render2D.run { context.drawCenteredString(text, 0, 0) }
+        hudElement("Auto Pet Title", enabled = { autoPetTitles.value },
+            shouldDraw = { titleTicker.isActive }, centered = true) { ctx, example ->
+            val text = if (example) "&6Golden Dragon" else autoTitle
+            dev.eppopkaaddons.utils.render.Render2D.run { ctx.drawCenteredString(text, 0, 0) }
             dev.eppopkaaddons.utils.render.RenderHelper.run { text.width() to text.height() }
         } defaults { scale = 2.5f }
 
+        register<WorldChangeEvent> {
+            cache.clear(); clearActive(); menuId = -1; selectedPetSlot = -1
+            titleTicker.unregister(); titleTicks = 0
+        }
         register<ChatMessageEvent> {
-            val msg = event.formattedText
-            if (chatDespawnRegex.matches(msg)) {
-                clearPet()
-                return@register
-            }
-            val summoned = chatSpawnRegex.find(msg)?.groups?.get("pet")?.value
-            val auto = chatPetRuleRegex.find(msg)?.groups?.get("pet")?.value
-            val next = (summoned ?: auto)?.removeFormatting()?.replace(Regex("\\s*✦$"), "") ?: return@register
-            setPetName(next)
-            if (auto != null && autoPetTitles.value && enabled && (!autoPetTitlesDungeonOnly.value || LocationUtils.inDungeon)) {
-                autoPetTitle = auto
-                autoPetTitleTicks = 40
-                ticker.register()
+            val text = PetXpModel.clean(event.unformattedText)
+            if (despawn.matches(text)) { clearActive(); return@register }
+            val auto = autopet.find(text)?.groupValues?.get(1)
+            val selected = summon.find(text)?.groupValues?.get(1) ?: auto ?: return@register
+            selectByName(selected)
+            if (auto != null && enabled && autoPetTitles.value &&
+                (!autoPetTitlesDungeonOnly.value || LocationUtils.inDungeon)) {
+                autoTitle = "&6${PetXpModel.named(auto)?.second ?: PetXpModel.normalizeName(auto)}"
+                titleTicks = 40
+                titleTicker.register()
             }
         }
-
-        register<ActionBarMessageEvent> {
-            if (petName.isBlank() || xpForLevel <= 0.0) return@register
-            val gain = skillGainRegex.findAll(event.unformattedText)
-                .sumOf { it.groupValues[1].replace(",", "").toDoubleOrNull() ?: 0.0 }
-            if (gain <= 0.0) return@register
-            addPetXp(gain)
-        }
-
         register<ContainerFullyOpenedEvent> {
+            if (!petMenu.matches(PetXpModel.clean(event.title.unformattedText))) return@register
+            beginMenu(event.windowId)
             selectedPetSlot = -1
-            if (!event.title.unformattedText.matches(petMenuRegex)) return@register
-            for ((slot, stack) in event.items) {
-                val lore = stack.lore
-                val active = lore.any { it.removeFormatting() == "Click to despawn!" }
-                if (syncFromPetItem(stack, lore.map { it.removeFormatting() }, active) && active) {
-                    selectedPetSlot = slot
+            event.items.forEach { (slot, stack) -> observe(stack, slot, event.windowId, true) }
+        }
+        register<MainThreadPacketReceivedEvent.Post> {
+            when (val packet = event.packet) {
+                is ClientboundContainerSetSlotPacket -> {
+                    val pets = isPetsMenu(packet.containerId)
+                    observe(packet.item, packet.slot, packet.containerId, pets)
+                }
+                is ClientboundContainerSetContentPacket -> {
+                    val pets = isPetsMenu(packet.containerId())
+                    if (pets) selectedPetSlot = -1
+                    packet.items().forEachIndexed { slot, stack -> observe(stack, slot, packet.containerId(), pets) }
+                }
+                is ClientboundContainerClosePacket -> {
+                    if (packet.containerId == menuId) { menuId = -1; selectedPetSlot = -1 }
                 }
             }
         }
-
-        register<ContainerEvent.SlotClick> {
-            if (event.button != 0 || event.clickType != ContainerInput.PICKUP || event.slotId !in loadoutSlots) return@register
-            if (!event.screen.title.unformattedText.endsWith(") Loadouts")) return@register
-            player.containerMenu.items[event.slotId].lore.find { it.startsWith("§7Pet: ") }?.let {
-                setPetName(levelRegex.find(it.removeFormatting())?.groupValues?.get(2) ?: return@let)
+        register<PacketEvent.Sent> {
+            if (event.packet is ServerboundContainerClosePacket) { menuId = -1; selectedPetSlot = -1 }
+        }
+        register<ContainerEvent.Render.Slot.Pre> {
+            if (enabled && activePetHighlight.value && event.slot.index == selectedPetSlot &&
+                petMenu.matches(PetXpModel.clean(event.screen.title.unformattedText))) {
+                event.slot.highlight(event.context, petHighlightColor.value, 1)
             }
         }
-
-        register<ContainerEvent.Render.Slot.Pre> {
-            if (!enabled || !activePetHighlight.value || event.slot.index != selectedPetSlot) return@register
-            event.slot.highlight(event.context, petHighlightColor.value, 1)
-        }
-        register<PacketEvent.Sent> {
-            if (event.packet is ServerboundContainerClosePacket) selectedPetSlot = -1
-        }
-        register<MainThreadPacketReceivedEvent.Pre> {
-            if (event.packet is ClientboundContainerClosePacket) selectedPetSlot = -1
+        register<ContainerEvent.SlotClick> {
+            if (event.button != 0 || event.clickType != ContainerInput.PICKUP ||
+                !event.screen.title.unformattedText.endsWith(") Loadouts")) return@register
+            val stack = mc.player?.containerMenu?.items?.getOrNull(event.slotId) ?: return@register
+            stack.lore.map(PetXpModel::clean).firstOrNull { it.startsWith("Pet: ") }
+                ?.substringAfter("Pet: ")?.let(::selectByName)
         }
     }
 
-    private fun syncFromPetItem(stack: ItemStack, lore: List<String>, activate: Boolean): Boolean {
-        val formattedName = stack.hoverName.formattedText
-        val cleanName = formattedName.removeFormatting()
-        val match = levelRegex.find(cleanName) ?: return false
-        val level = match.groupValues[1].toIntOrNull() ?: return false
-        val name = match.groupValues[2].trim().removeSuffix(" ✦")
-        val ratio = lore.asSequence().mapNotNull(xpLineRegex::find).firstOrNull() ?: return false
-        val current = ratio.groupValues[1].replace(",", "").toDoubleOrNull() ?: 0.0
-        val needed = ratio.groupValues[2].replace(",", "").toDoubleOrNull() ?: 0.0
-        val offset = rarityOffsetFrom(formattedName)
-        val max = if (name.equals("Golden Dragon", true) || name.equals("Jade Dragon", true) || name.equals("Rose Dragon", true)) 200 else 100
-        val state = PetState(
-            stack.copy(),
-            level,
-            max,
-            offset,
-            current,
-            needed,
-            totalBeforeLevel(level, offset, max) + current,
-            totalBeforeLevel(max, offset, max),
-        )
-        petCache[name.lowercase()] = state
-        if (!activate) return true
-
-        val changed = !name.equals(petName, true)
-        petName = name
-        applyState(state)
-        if (changed) samples.clear()
-        recordSample()
-        return true
+    private fun isPetsMenu(id: Int): Boolean {
+        val screen = mc.screen as? AbstractContainerScreen<*> ?: return false
+        val matches = mc.player?.containerMenu?.containerId == id && petMenu.matches(PetXpModel.clean(screen.title.unformattedText))
+        if (matches) beginMenu(id)
+        return matches
     }
 
-    private fun setPetName(name: String) {
-        val clean = name.removeFormatting().trim()
-        if (clean.equals(petName, true)) return
-        petName = clean
-        petCache[clean.lowercase()]?.let {
-            applyState(it)
-            samples.clear()
-            recordSample()
+    private fun beginMenu(id: Int) {
+        if (menuId != id) {
+            // Without a UUID we cannot prove that a slot in a new window is the
+            // same pet. Do not merge its rates or retain ambiguous old copies.
+            cache.entries.removeAll { !it.value.stableIdentity }
+            menuId = id
+        }
+    }
+
+    private fun observe(stack: ItemStack, slot: Int, container: Int, petsMenu: Boolean) {
+        if (stack.isEmpty) return
+        val data = stack.customData
+        val attributes = data.getCompound("ExtraAttributes").getOrNull() ?: data
+        val json = data.getString("petInfo").getOrNull()?.takeIf { it.isNotBlank() }
+            ?: attributes.getString("petInfo").getOrNull()
+        val lore = stack.lore.map(PetXpModel::clean)
+        val reading = PetXpModel.read(stack.hoverName.unformattedText, lore, json) ?: return
+        // UUID distinguishes two pets with the same name/rarity. A window+slot
+        // fallback is not reused between windows for rate estimation.
+        val uuid = reading.uuid ?: data.getString("uuid").getOrNull()?.takeIf { it.isNotBlank() }
+            ?: attributes.getString("uuid").getOrNull()?.takeIf { it.isNotBlank() }
+        val key = uuid ?: "${reading.type}:${reading.rarity}:window$container:slot$slot"
+        val isActive = petsMenu && (reading.active || lore.any { it.equals("Click to despawn!", true) })
+        val matchingActive = active?.key == key
+        if (!petsMenu && !matchingActive) return
+        val state = State(key, reading, stack.copy(), System.currentTimeMillis(), uuid != null)
+        cache[key] = state
+        if (cache.size > 512) cache.entries.firstOrNull { it.key != active?.key }?.key?.let(cache::remove)
+        if (petsMenu && matchingActive && !isActive && lore.any { it.equals("Click to summon!", true) }) {
+            clearActive()
+            selectedPetSlot = -1
             return
         }
-        activePetStack = ItemStack.EMPTY
-        petLevel = 0
-        xpIntoLevel = 0.0
-        xpForLevel = 0.0
-        totalXp = 0.0
-        maxTotalXp = 0.0
-        samples.clear()
-    }
-
-    private fun applyState(state: PetState) {
-        activePetStack = state.stack.copy()
-        petLevel = state.level
-        petMaxLevel = state.maxLevel
-        rarityOffset = state.rarityOffset
-        xpIntoLevel = state.xpIntoLevel
-        xpForLevel = state.xpForLevel
-        totalXp = state.totalXp
-        maxTotalXp = state.maxTotalXp
-    }
-
-    private fun addPetXp(gain: Double) {
-        totalXp += gain
-        xpIntoLevel += gain
-        while (xpForLevel > 0.0 && xpIntoLevel >= xpForLevel && petLevel < petMaxLevel) {
-            xpIntoLevel -= xpForLevel
-            petLevel++
-            xpForLevel = requirementForLevel(petLevel, rarityOffset, petMaxLevel).toDouble()
-        }
-        recordSample()
-    }
-
-    private fun recordSample() {
-        val now = System.currentTimeMillis()
-        samples.addLast(XpSample(now, totalXp))
-        val cutoff = now - sampleMinutes.value * 60_000L
-        while (samples.size > 2 && samples.first.at < cutoff) samples.removeFirst()
-    }
-
-    private data class OverlayModel(
-        val name: String,
-        val level: Int,
-        val progress: Float,
-        val xpPerHour: Double,
-        val nextSeconds: Double?,
-        val maxSeconds: Double?,
-    )
-
-    private fun snapshot(): OverlayModel {
-        val first = samples.firstOrNull()
-        val last = samples.lastOrNull()
-        val rate = if (first != null && last != null && last.at - first.at >= 10_000L) {
-            ((last.total - first.total) * 3_600_000.0 / (last.at - first.at)).coerceAtLeast(0.0)
-        } else 0.0
-        val nextLeft = (xpForLevel - xpIntoLevel).coerceAtLeast(0.0)
-        val maxLeft = (maxTotalXp - totalXp).coerceAtLeast(0.0)
-        return OverlayModel(
-            petName,
-            petLevel,
-            if (xpForLevel > 0) (xpIntoLevel / xpForLevel).toFloat() else 0f,
-            rate,
-            if (rate > 0 && petLevel < petMaxLevel) nextLeft / rate * 3600.0 else null,
-            if (rate > 0 && petLevel < petMaxLevel) maxLeft / rate * 3600.0 else null,
-        )
-    }
-
-    private fun clearPet() {
-        petName = ""
-        petLevel = 0
-        activePetStack = ItemStack.EMPTY
-        samples.clear()
-        selectedPetSlot = -1
-    }
-
-    private fun rarityOffsetFrom(formatted: String): Int {
-        val code = Regex("§([0-9a-f])", RegexOption.IGNORE_CASE).find(formatted)?.groupValues?.get(1)?.lowercase()
-        return when (code) {
-            "f" -> 0
-            "a" -> 6
-            "9" -> 11
-            "5" -> 16
-            "6", "d" -> 20
-            else -> 20
+        if (isActive || matchingActive) {
+            if (active?.key != key) history.clear()
+            active = state; pendingName = reading.name; cached = false
+            if (petsMenu && isActive) selectedPetSlot = slot
+            if (reading.source != PetXpModel.Source.UNKNOWN) reading.totalXp?.let {
+                history.record(it, state.at, sampleMinutes.value)
+            }
         }
     }
 
-    private fun totalBeforeLevel(level: Int, offset: Int, max: Int): Double {
-        var total = 0.0
-        for (current in 1 until level.coerceAtMost(max)) total += requirementForLevel(current, offset, max)
-        return total
+    private fun selectByName(value: String) {
+        val header = PetXpModel.named(value)
+        val name = header?.second ?: PetXpModel.normalizeName(value)
+        val matches = cache.values.filter { it.reading.name.equals(name, true) &&
+            (header == null || it.reading.level == header.first) }
+        // Ambiguous duplicate pets are deliberately not guessed.
+        if (matches.size == 1) {
+            val state = matches.single()
+            if (active?.key != state.key) history.clear()
+            active = state; cached = true
+        } else { active = null; history.clear() }
+        pendingName = name
+        paintedKey = ""
     }
-
-    private fun requirementForLevel(level: Int, offset: Int, max: Int): Int {
-        val index = offset + level - 1
-        return when {
-            index in PET_LEVELS.indices -> PET_LEVELS[index]
-            max == 200 -> 1_886_700
-            else -> 0
-        }
+    private fun clearActive() {
+        active = null; pendingName = ""; history.clear(); cached = false; paintedKey = ""
     }
-
-    private fun formatXp(value: Double): String = when {
-        value <= 0 -> "—"
-        value >= 1_000_000 -> "%.2fM".format(value / 1_000_000.0)
-        value >= 1_000 -> "%.1fk".format(value / 1_000.0)
-        else -> value.roundToLong().toString()
+    private fun motion() = AetherOSSettings.animations.value && !AetherOSSettings.reducedMotion.value
+    private fun preview(): PetXpModel.Reading {
+        val start = requireNotNull(PetXpModel.totalBeforeLevel("GOLDEN_DRAGON", "LEGENDARY", 147))
+        return requireNotNull(PetXpModel.read("[Lvl 147] Golden Dragon", emptyList(),
+            """{"type":"GOLDEN_DRAGON","tier":"LEGENDARY","exp":${start + 1_207_488}}"""))
     }
-
-    private fun formatDuration(seconds: Double?): String {
-        if (seconds == null || !seconds.isFinite()) return "—"
-        val s = seconds.roundToLong().coerceAtLeast(0)
-        return when {
-            s >= 86_400 -> "${s / 86_400}d ${(s % 86_400) / 3600}h"
-            s >= 3_600 -> "${s / 3600}h ${(s % 3600) / 60}m"
-            s >= 60 -> "${s / 60}m ${s % 60}s"
-            else -> "${s}s"
-        }
+    private val titleTicker = EventBus.listener<TickEvent.Start> {
+        if (--titleTicks <= 0) listener.unregister()
     }
-
-    private val ticker = EventBus.listener<TickEvent.Start> {
-        autoPetTitleTicks--
-        if (autoPetTitleTicks <= 0) listener.unregister()
-    }
-
-    private val Preview = OverlayModel("Golden Dragon", 147, .64f, 1_240_000.0, 83.0, 232_200.0)
-
-    private val PET_LEVELS = intArrayOf(
-        100,110,120,130,145,160,175,190,210,230,250,275,300,330,360,400,440,490,540,600,
-        660,730,800,880,960,1050,1150,1260,1380,1510,1650,1800,1960,2130,2310,2500,2700,2920,3160,3420,
-        3700,4000,4350,4750,5200,5700,6300,7000,7800,8700,9700,10800,12000,13300,14700,16200,17800,19500,21300,23200,
-        25200,27400,29800,32400,35200,38200,41400,44800,48400,52200,56200,60400,64800,69400,74200,79200,84700,90700,97200,104200,
-        111700,119700,128200,137200,146700,156700,167700,179700,192700,206700,221700,237700,254700,272700,291700,311700,333700,357700,383700,411700,
-        441700,476700,516700,561700,611700,666700,726700,791700,861700,936700,1016700,1101700,1191700,1286700,1386700,1496700,1616700,1746700,1886700,
-    )
 }

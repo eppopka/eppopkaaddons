@@ -1,0 +1,195 @@
+EPPOPKAADDONS — PROJECT / AI HANDOFF NOTES
+========================================
+Research baseline: public GitHub origin/main, commit
+078212f ("Refactor src: updated delay sliders, cleaned up features, moved categories").
+Repository: https://github.com/eppopka/eppopkaaddons
+These notes describe source inspection, not a live Hypixel gameplay test.
+
+INSTALL THIS DELIVERY CORRECTLY
+-------------------------------
+1. Back up the project and any uncommitted edits.
+2. REPLACE the existing src directory with this archive's src directory.
+   Do NOT merely extract/merge over the old src: a ZIP cannot remove old files.
+3. Keep this notes.txt at the project root.
+4. Track src/main/kotlin/dev/eppopkaaddons/config/ in Git. The repository's
+   broad config/ ignore rule currently hides these necessary source files.
+   The supplied patch adds these exceptions to .gitignore:
+     !src/main/kotlin/dev/eppopkaaddons/config/
+     !src/main/kotlin/dev/eppopkaaddons/config/**
+5. Alternatively, on an unchanged checkout of 078212f, apply the included
+   apply-fixes.patch from the project root. This handles deletions and config
+   sources too. Do not apply it on top of an already-replaced src.
+     git apply --check apply-fixes.patch
+     git apply apply-fixes.patch
+6. Build cleanly to eliminate stale compiled classes. Install only ONE built
+   mod JAR (choose cheat OR legit, not both). Do not keep a previous version
+   of eppopkaaddons in the Minecraft mods folder alongside the new one.
+
+FILES THAT MUST NOT EXIST AFTER INSTALLATION
+-------------------------------------------
+src/main/kotlin/dev/eppopkaaddons/features/impl/visual/PetDisplay.kt
+src/main/kotlin/dev/eppopkaaddons/features/impl/qol/ShitterList.kt
+src/main/kotlin/dev/eppopkaaddons/features/impl/dungeon/LbTimer.kt
+
+Correct locations (exactly ONE of each):
+src/main/kotlin/dev/eppopkaaddons/features/impl/general/PetDisplay.kt
+src/main/kotlin/dev/eppopkaaddons/features/impl/dungeon/ShitterList.kt
+
+WHAT WENT WRONG IN THE FIRST DELIVERY
+-------------------------------------
+The latest public commit has both the new and the old PetDisplay.kt and
+ShitterList.kt files. It also still has LbTimer.kt. The earlier ZIP contained
+only the replacement src tree, without sufficient deletion instructions.
+Merging that ZIP leaves the old source files behind.
+ClassGraphInitializer.registerFeatures() discovers every Feature subclass
+under features.impl, so different packages are different registered objects,
+even if they have identical display/config names. This causes duplicate GUI
+entries, duplicate pet HUD elements, and potentially duplicate event handlers
+or /sl command registration. ConfigManager resolves features/HUDs by name,
+which becomes ambiguous with duplicates.
+
+The moved general/PetDisplay.kt also still explicitly declared
+"override val category = CategoryType.VISUAL". That contradicted its folder.
+The spatial GUI had an independent class-name allowlist, so GUI category
+assignment and Feature.category could disagree.
+
+ARCHITECTURE / CONVENTIONS TO PRESERVE
+------------------------------------
+Language/runtime: Kotlin + Java, Fabric, Minecraft 26.1.2, Java 25.
+Use the repository's Gradle wrapper, not a guessed Gradle/Minecraft version.
+Entry point: src/main/kotlin/dev/eppopkaaddons/EppopkaAddons.kt.
+Main config command: /ea. Some inherited names still say NoammAddons.
+README.md is stale (it still mentions LB Timer and an older GUI description).
+Do not use it as the authoritative current feature list.
+
+Feature: features/Feature.kt derives CategoryType from the immediate folder
+following impl in the package. Keep package declarations and directories in
+sync. User wants features organized in their special category folders.
+  impl/general -> GENERAL -> GUI title "Global"
+  impl/visual  -> VISUAL
+  impl/qol     -> QOL
+  impl/dungeon -> DUNGEON
+  impl/hunting -> HUNTING
+Do not invent an ingame folder/category; none exists in this baseline.
+AetherOSSettings is a core settings object, deliberately hidden from the
+normal module lists, not a second Pet Overlay.
+
+Registration: init/ClassGraphInitializer.kt (auto-discovery, not a hand-written
+feature list). FeatureManager holds Feature objects and HudElements.
+GUI routing: ui/clickgui/enums/SpatialCategory.kt. This delivery uses
+feature.category directly, eliminating the independent name allowlists.
+Settings UI: ui/clickgui/SettingInspector.kt.
+Settings/config framework: config/ and config/types/.
+CHEAT preprocessor directives control AutoRag/AutoReel in the legit variant.
+Keep these directives and validate both cheat and legit compilation.
+
+PET OVERLAY — CURRENT RENDER FIX
+-------------------------------
+Actual object/class name is PetDisplay; display name is "Pet Overlay".
+No explicit category override now; its general folder determines Global.
+
+Previous renderer: utils/render/ItemRenderer.kt implements a custom full-screen
+picture-in-picture batch. It copies the HUD pose and separately multiplies
+item translations by window GUI scale. Its supplied x/y are NOT simply an
+item center: renderToTexture adds +8 to both coordinates before item scaling.
+The earlier comment claiming that x/y were centered was incorrect.
+Changing one y value in this custom path was not sufficient evidence of a fix.
+
+This delivery bypasses that custom renderer for the pet portrait only:
+  pushMatrix -> translate(11, 8) -> scale(1.55, 1.55)
+  -> ctx.item(activePetStack, 0, 0) -> popMatrix in finally.
+Minecraft 26.1.2 GuiGraphicsExtractor.item was inspected with javap. It copies
+its current Matrix3x2f pose and scissor into GuiItemRenderState. The native
+16x16 item therefore shares the card's HUD, resolution and GUI transforms.
+Local nominal portrait box: x=11..35.8, y=8..32.8. XP bar starts at y=36;
+name/level text begins at x=51. This box fits both compact and full cards.
+The shared ItemRenderer was NOT changed, to avoid affecting other callers.
+Do not compensate for screen coordinates/window scale inside this local draw.
+
+HUD transforms: ui/utils/Resolution.kt applies a 960x540 reference scaling;
+ui/hud/HudElement.kt adds saved position and HUD scale before drawing.
+Native rendering should inherit both transforms exactly once.
+Pet menu ItemStack is copied into activePetStack, retaining the actual skull
+texture/components rather than hardcoding a pet image.
+
+PET XP — RETAINED BEHAVIOR AND HONEST LIMITATIONS
+------------------------------------------------
+PetDisplay reads name, rarity, level and numeric current/required XP from the
+Pets menu lore, caches visited pet stacks, and recognizes summon/autopet chat.
+Without first opening the Pets menu, a chat-selected uncached pet has no item
+or XP baseline. Open /pets with the active pet visible after joining.
+Actionbar skill gains are added to the estimated pet XP and level progress.
+This is NOT authoritative pet XP: skill mismatch penalties, Taming, pet items,
+special pets, repeated actionbar messages, etc. are not fully modeled.
+The numeric XP regex currently does not parse suffixes such as k/M. The generic
+level table/200-level fallback is also not a complete model of every pet.
+XP cache can be stale after swaps; XP samples are session-local.
+Do not tell the user that exact Hypixel XP has been validated in-game.
+A proper future XP fix needs real server lore/actionbar examples, pet bonuses,
+and repeated-message handling; avoid inventing pet-specific rules.
+
+OTHER REQUESTED CHANGES RETAINED FROM FIRST DELIVERY
+---------------------------------------------------
+AutoRag: RangeSliderSetting for Cast Delay and Menu Delay.
+AutoReel: RangeSliderSetting for Reaction Delay.
+RangeSliderSetting stores {lower, upper}; SettingInspector renders two handles.
+Old separately named delay settings are not automatically migrated into these
+new property names; previous saved bounds may need re-entering.
+ChinaHat: no Smoothing or Outline toggle. Fixed geometry segment count;
+outline rendering itself remains enabled, as in the earlier interpretation.
+Halo: no Smoothing or Phase settings; rendering uses depth testing.
+Custom Names is implemented by visual/Cosmetics.kt, NOT CustomNames.kt in this
+baseline. Only Show Custom Names, Show Custom Badges, and Reload remain.
+Cosmetic halo/wings helper changes and the tooltip mixin signature fix from the
+first delivery are preserved. Do not delete their still-referenced hooks.
+LB Timer is removed by deleting LbTimer.kt, not merely hiding its GUI entry.
+ShitterList persists its blacklist at Minecraft config/shitters.txt; keep it.
+
+CONFIG SOURCE WARNING
+---------------------
+The config framework is missing from tracked origin/main because of .gitignore.
+This delivery includes 21 previously restored config source files, including
+RangeSliderSetting; keep them in Git or a fresh checkout will not compile.
+ConfigManager saves by jsonName, not by Java package, so moving these features
+does not require renaming their existing config/HUD keys.
+There is a V0-to-V1 migrator, but the current self-init whitelist does not
+include config.*. Legacy v0-config migration should be reviewed separately;
+do not assume that old min/max delay settings are migrated by this framework.
+
+VALIDATION / MANUAL CHECKLIST
+----------------------------
+FeatureLayoutTest.kt adds four source-structure regression tests: exactly one
+moved source each and no LB Timer; matching category folders/packages; shared
+category routing; native pet rendering with a local box below the top edge.
+These are structural checks, NOT screenshot or live Minecraft rendering tests.
+GaussianRandomTest.kt is a standalone main, not an automated @Test suite.
+Compilation/test results from this delivery are appended below.
+
+After installing and launching, verify:
+- One Pet Overlay in Global; one Shitter List in Dungeon; no LB Timer.
+- One corresponding HUD card and one /sl registration.
+- Open /pets so the active pet has a cached stack and XP baseline.
+- Inspect full and compact overlay at HUD scales 0.75, 1, 1.5, 2, different
+  Minecraft GUI scales, different resolutions, and after dragging the HUD.
+- Portrait is inside the top card, aligned with name/level, above the XP bar.
+- If an offset remains, provide a screenshot, GUI scale, HUD scale, pet name,
+  compact/full mode, and loaded mod version; investigate actual render state
+  rather than repeatedly guessing a y offset.
+
+DELIVERY VALIDATION RESULTS
+---------------------------
+Passed: compileKotlin, compileJava, compileCheatKotlin, compileCheatJava,
+        compileLegitKotlin, compileLegitJava.
+FeatureLayoutTest: 4 tests, 0 failures, 0 errors, 0 skipped.
+No duplicate Feature object names in the supplied source tree.
+Initial parallel batch's Gradle daemon stopped before legit compilation
+completed; sequential/lower-memory retry succeeded (BUILD SUCCESSFUL).
+Reproducible command (JDK 25 must be selected):
+  bash ./gradlew --no-daemon --max-workers=1 \
+    -Dorg.gradle.jvmargs=-Xmx1536m -Pkotlin.compiler.execution.strategy=in-process \
+    compileKotlin compileJava compileCheatKotlin compileCheatJava \
+    compileLegitKotlin compileLegitJava test
+For a fresh installed source replacement, add clean before the task list.
+The included patch was checked/applied to a fresh archive of commit 078212f;
+the resulting src tree matched this delivery exactly.
+No Minecraft/Hypixel session, screenshot comparison, or live XP test was run.
